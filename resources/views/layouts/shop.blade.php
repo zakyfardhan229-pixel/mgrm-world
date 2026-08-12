@@ -249,14 +249,47 @@
             @yield('content')
         </main>
 
-        <footer class="bg-ink text-white mt-16">
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
-                <div class="flex items-center justify-center gap-4">
-                    <p class="text-sm text-neutral-400">&copy; {{ date('Y') }} MGRM World. All rights reserved.</p>
-                    </p>
+        <footer class="bg-[#1f1f1f] text-white mt-16">
+            <div class="w-full px-6 sm:px-8 lg:px-10 py-10 sm:py-12">
+
+                {{-- PAYMENT METHOD --}}
+                <div class="flex flex-col items-center">
+
+                    <h3 class="text-white text-[14px] sm:text-[15px] font-bold mb-6">
+                        Payment Method
+                    </h3>
+
+                    <div class="flex flex-wrap items-center justify-center gap-x-5 gap-y-4
+                       sm:gap-x-6 sm:gap-y-5 max-w-4xl">
+
+                        {{-- QRIS --}}
+                        <img src="{{ asset('payment-qris.svg') }}" alt="QRIS"
+                            class="h-16 sm:h-17 w-auto object-contain">
+
+                    </div>
                 </div>
+
+
+                {{-- SHIPMENT METHOD --}}
+                <div class="flex flex-col items-center mt-10 sm:mt-11">
+
+                    <h3 class="text-white text-[14px] sm:text-[15px] font-bold mb-7">
+                        Shipment Method
+                    </h3>
+
+                    <div class="flex items-center justify-center">
+                        <img src="{{ asset('shipment-jne.svg') }}" alt="JNE" class="h-16 sm:h-17 w-auto object-contain">
+                    </div>
+
+                </div>
+
+
+                {{-- BOTTOM SPACE / COPYRIGHT --}}
+                <div class="h-8 sm:h-10"></div>
+
             </div>
         </footer>
+
     </div>
 </body>
 

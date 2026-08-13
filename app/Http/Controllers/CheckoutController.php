@@ -8,9 +8,9 @@ use App\Models\Order;
 use App\Models\Product;
 use App\Models\User;
 use App\Support\ProductQrCode;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\URL;
@@ -108,7 +108,7 @@ class CheckoutController extends Controller
     /**
      * Generate a QRIS QR code containing a signed URL to confirm payment.
      */
-    public function qrisGenerate(Request $request): Response
+    public function qrisGenerate(Request $request): JsonResponse
     {
         $validated = $request->validate([
             'customer_name' => ['required', 'string', 'max:150'],
@@ -158,20 +158,49 @@ class CheckoutController extends Controller
 
         Cache::put("qris:{$token}", $payload, now()->addHour());
 
-        $signedUrl = URL::signedRoute('checkout.qris.confirm', ['token' => $token]);
+        // The signature is computed over a relative URL so it stays valid regardless of
+        // which host the buyer uses to open the QR (relevant when the app is exposed
+        // through ngrok or other proxies). The absolute base is added only for embedding.
+        $relativeUrl = URL::signedRoute('checkout.qris.confirm', ['token' => $token], null, false);
+
+        $signedUrl = url($relativeUrl);
 
         $svg = ProductQrCode::svgForUrl($signedUrl);
 
-        return response($svg, 200, [
-            'Content-Type' => 'image/svg+xml',
-            'Cache-Control' => 'no-store',
-        ]);
+        return response()->json([
+            'token' => $token,
+            'svg' => $svg,
+        ])->header('Cache-Control', 'no-store');
     }
 
     /**
      * Confirm QRIS payment via signed URL (one-time use).
+     *
+     * Shows a public confirmation page with the order details before the
+     * payment is actually completed, so the buyer can review the order.
      */
-    public function confirmQris(Request $request, string $token): RedirectResponse
+    public function confirmQris(Request $request, string $token): View
+    {
+        $payload = Cache::get("qris:{$token}");
+
+        if ($payload === null) {
+            abort(410, 'QRIS ini sudah tidak berlaku (kadaluarsa atau sudah digunakan).');
+        }
+
+        $lines = $this->resolveLines($payload['cart_lines'] ?? []);
+
+        return view('checkout.qris-confirm', [
+            'token' => $token,
+            'payload' => $payload,
+            'lines' => $lines,
+            'total' => $this->linesTotal($lines),
+        ]);
+    }
+
+    /**
+     * Process the QRIS payment after the buyer confirms on the public page.
+     */
+    public function processQris(Request $request, string $token): RedirectResponse
     {
         $payload = Cache::pull("qris:{$token}");
 
@@ -188,9 +217,55 @@ class CheckoutController extends Controller
             $payload['buy_now_product_id'] ?? null,
         );
 
+        // Let the device that generated the QR (desktop) know the payment finished.
+        Cache::put("qris_order:{$token}", $order->id, now()->addHour());
+
         return redirect()
-            ->route('orders.show', $order)
+            ->route('checkout.qris.success', $token)
             ->with('success', 'Pembayaran QRIS berhasil. Pesanan Anda telah dibuat.');
+    }
+
+    /**
+     * Public success page shown on the scanning device after confirmation.
+     */
+    public function qrisSuccess(Request $request, string $token): View
+    {
+        $orderId = Cache::get("qris_order:{$token}");
+
+        if ($orderId === null) {
+            abort(410, 'QRIS ini sudah tidak berlaku (kadaluarsa atau sudah digunakan).');
+        }
+
+        $order = Order::whereKey($orderId)->with('items')->firstOrFail();
+
+        return view('checkout.qris-success', ['order' => $order]);
+    }
+
+    /**
+     * Report QRIS payment status for the given token so the QR-generating
+     * device can navigate to the order page once the scan completes.
+     */
+    public function qrisStatus(Request $request, string $token): JsonResponse
+    {
+        $payload = Cache::get("qris:{$token}");
+
+        if ($payload !== null) {
+            abort_if((int) $payload['user_id'] !== $request->user()->id, 403);
+
+            return response()->json(['status' => 'pending']);
+        }
+
+        $orderId = Cache::get("qris_order:{$token}");
+
+        if ($orderId !== null) {
+            $order = Order::whereKey($orderId)
+                ->where('user_id', $request->user()->id)
+                ->firstOrFail();
+
+            return response()->json(['status' => 'confirmed', 'order_id' => $order->id]);
+        }
+
+        return response()->json(['status' => 'expired'], 410);
     }
 
     /**
@@ -205,35 +280,14 @@ class CheckoutController extends Controller
         ?int $buyNowProductId = null,
     ): Order {
         return DB::transaction(function () use ($user, $payload, $status, $paymentMethod, $buyNowProductId, $cartLines) {
-            $lines = [];
+            $lines = $this->resolveLines($cartLines);
 
-            foreach ($cartLines as $cartLine) {
-                $product = Product::whereKey($cartLine['product_id'])->lockForUpdate()->firstOrFail();
-
-                if (! $product->is_active) {
-                    throw ValidationException::withMessages(['cart' => 'Produk '.$product->name.' sudah tidak aktif.']);
-                }
-
-                if ($product->stock < $cartLine['quantity']) {
-                    throw ValidationException::withMessages(['cart' => 'Stok '.$product->name.' hanya tersisa '.$product->stock.'. Perbarui jumlah di keranjang.']);
-                }
-
-                $lines[] = [
-                    'product' => $product,
-                    'quantity' => $cartLine['quantity'],
-                ];
-            }
-
-            $totalCents = array_reduce(
-                $lines,
-                fn (int $carry, array $line): int => $carry + (int) round($line['product']->price * 100) * $line['quantity'],
-                0,
-            );
+            $total = $this->linesTotal($lines);
 
             $order = Order::create([
                 'order_number' => Order::generateOrderNumber(),
                 'user_id' => $user->id,
-                'total' => number_format($totalCents / 100, 2, '.', ''),
+                'total' => $total,
                 'status' => $status,
                 'customer_name' => $payload['customer_name'],
                 'phone' => $payload['phone'],
@@ -264,6 +318,47 @@ class CheckoutController extends Controller
 
             return $order;
         });
+    }
+
+    /**
+     * Resolve cart lines into product + quantity, validating availability.
+     */
+    private function resolveLines(array $cartLines): array
+    {
+        $lines = [];
+
+        foreach ($cartLines as $cartLine) {
+            $product = Product::whereKey($cartLine['product_id'])->lockForUpdate()->firstOrFail();
+
+            if (! $product->is_active) {
+                throw ValidationException::withMessages(['cart' => 'Produk '.$product->name.' sudah tidak aktif.']);
+            }
+
+            if ($product->stock < $cartLine['quantity']) {
+                throw ValidationException::withMessages(['cart' => 'Stok '.$product->name.' hanya tersisa '.$product->stock.'. Perbarui jumlah di keranjang.']);
+            }
+
+            $lines[] = [
+                'product' => $product,
+                'quantity' => $cartLine['quantity'],
+            ];
+        }
+
+        return $lines;
+    }
+
+    /**
+     * Compute the total (in rupiah string format) for a set of resolved lines.
+     */
+    private function linesTotal(iterable $lines): string
+    {
+        $totalCents = 0;
+
+        foreach ($lines as $line) {
+            $totalCents += (int) round($line['product']->price * 100) * $line['quantity'];
+        }
+
+        return number_format($totalCents / 100, 2, '.', '');
     }
 
     /**

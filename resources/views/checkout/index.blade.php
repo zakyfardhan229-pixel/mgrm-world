@@ -18,7 +18,7 @@
 
             @if ($buyNow)
                 <p class="mt-2 text-sm text-neutral-500">
-                    Checkout cepat: hanya produk yang Anda pilih yang akan dipesan.
+                    Silahkan isi detail dibawah ini untuk melanjutkan Pemesanan.
                 </p>
             @endif
 
@@ -42,9 +42,29 @@
             @endif
 
             <form action="{{ route('checkout.store') }}" method="POST"
-                class="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6 items-start" data-validate
-                x-data="{ paymentMethod: '{{ old('payment_method', 'transfer') }}', qrData: null, generating: false }"
-                x-ref="checkoutForm">
+                class="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6 items-start" data-validate x-data="{
+                                    paymentMethod: '{{ old('payment_method', 'transfer') }}',
+                                    qrData: null,
+                                    generating: false,
+                                    qrisToken: null,
+                                    pollTimer: null,
+                                    checkQrisStatus() {
+                                        if (!this.qrisToken) return;
+                                        fetch('{{ route('checkout.qris.status', ['token' => '__TOKEN__']) }}'.replace('__TOKEN__', this.qrisToken))
+                                            .then(r => r.json())
+                                            .then(d => {
+                                                if (d.status === 'confirmed') {
+                                                    clearInterval(this.pollTimer);
+                                                    this.pollTimer = null;
+                                                    window.location.href = '/pesanan/' + d.order_id;
+                                                } else if (d.status === 'expired') {
+                                                    clearInterval(this.pollTimer);
+                                                    this.pollTimer = null;
+                                                }
+                                            })
+                                            .catch(() => {});
+                                    }
+                                }" x-ref="checkoutForm">
                 @csrf
 
                 <div class="lg:col-span-2 bg-white rounded-lg border border-neutral-200 shadow-card p-6">
@@ -107,25 +127,38 @@
 
                         {{-- QRIS --}}
                         <div x-show="paymentMethod === 'qris'" x-cloak class="mt-2">
-                            <button type="button" @click="generating = true; qrData = null;
-                                                    fetch('{{ route('checkout.qris.generate') }}', {
-                                                        method: 'POST',
-                                                        headers: { 'X-CSRF-TOKEN': '{{ csrf_token() }}' },
-                                                        body: new FormData($refs.checkoutForm)
-                                                    })
-                                                        .then(r => { generating = false; if (!r.ok) { alert('Gagal membuat QRIS. Pastikan data terisi dan stok masih tersedia.'); throw new Error('failed'); } return r.text(); })
-                                                        .then(svg => qrData = 'data:image/svg+xml;base64,' + btoa(svg))
-                                                        .catch(() => {})" :disabled="generating"
+                            <button type="button" @click="generating = true;
+                                                                            if (qrData) URL.revokeObjectURL(qrData);
+                                                                            qrData = null;
+                                                                            if (pollTimer) clearInterval(pollTimer);
+                                                                            pollTimer = null;
+                                                                            fetch('{{ route('checkout.qris.generate') }}', {
+                                                                                method: 'POST',
+                                                                                headers: { 'X-CSRF-TOKEN': '{{ csrf_token() }}' },
+                                                                                body: new FormData($refs.checkoutForm)
+                                                                            })
+                                                                                .then(r => { generating = false; const ct = r.headers.get('Content-Type') || ''; if (!r.ok || !ct.includes('application/json')) { alert('Gagal membuat QRIS. Pastikan data terisi, nomor HP valid, dan stok tersedia.'); throw new Error('failed'); } return r.json(); })
+                                                                                .then(data => {
+                                                                                    qrData = URL.createObjectURL(new Blob([data.svg], { type: 'image/svg+xml' }));
+                                                                                    qrisToken = data.token;
+                                                                                    pollTimer = setInterval(() => checkQrisStatus(), 3000);
+                                                                                })
+                                                                                .catch(() => {})" :disabled="generating"
                                 class="w-full rounded-full bg-ink px-6 py-3 text-sm font-bold text-white shadow-card hover:shadow-hover transition">
                                 <span x-show="!generating">Generate QRIS</span>
                                 <span x-show="generating">Memuat...</span>
                             </button>
 
-                            <p class="mt-2 text-[10px] text-neutral-400 text-center">
+                            <p x-show="!qrisToken" class="mt-2 text-[10px] text-neutral-400 text-center">
                                 Pindai dengan HP Anda untuk menyelesaikan pembayaran QRIS.
                             </p>
 
                             <img x-show="qrData" :src="qrData" alt="QRIS" class="mx-auto mt-3 h-52 w-52 object-contain">
+
+                            <p x-show="qrisToken && !generating"
+                                class="mt-3 text-center text-sm font-semibold text-emerald-600">
+                                Menunggu konfirmasi pembayaran dari HP...
+                            </p>
                         </div>
                     </div>
                 </div>

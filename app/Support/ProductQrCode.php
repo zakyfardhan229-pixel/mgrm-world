@@ -15,7 +15,7 @@ class ProductQrCode
     public static function svgForUrl(string $url): string
     {
         $renderer = new ImageRenderer(
-            new RendererStyle(200, 0),
+            new RendererStyle(200, 8),
             new SvgImageBackEnd
         );
 

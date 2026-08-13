@@ -42,8 +42,9 @@ Route::middleware('auth')->group(function () {
     Route::post('/checkout', [CheckoutController::class, 'store'])->name('checkout.store');
 
     Route::post('/checkout/qris/generate', [CheckoutController::class, 'qrisGenerate'])->name('checkout.qris.generate');
+    Route::get('/checkout/qris/status/{token}', [CheckoutController::class, 'qrisStatus'])->name('checkout.qris.status');
 
-     Route::get('/pesanan', [OrderController::class, 'index'])->name('orders.index');
+    Route::get('/pesanan', [OrderController::class, 'index'])->name('orders.index');
     Route::get('/pesanan/{order}', [OrderController::class, 'show'])->name('orders.show');
 
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
@@ -53,7 +54,10 @@ Route::middleware('auth')->group(function () {
 
 Route::get('/checkout/qris/confirm/{token}', [CheckoutController::class, 'confirmQris'])
     ->name('checkout.qris.confirm')
-    ->middleware('signed');
+    ->middleware('signed:relative');
+
+Route::post('/checkout/qris/process/{token}', [CheckoutController::class, 'processQris'])->name('checkout.qris.process');
+Route::get('/checkout/qris/success/{token}', [CheckoutController::class, 'qrisSuccess'])->name('checkout.qris.success');
 
 /*
 |--------------------------------------------------------------------------
@@ -78,7 +82,7 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->name('admin.')->grou
     Route::get('produk/{product}/qr', [AdminProductController::class, 'qr'])->name('produk.qr');
 
     Route::get('pesanan', [AdminOrderController::class, 'index'])->name('orders.index');
-     Route::get('pesanan/{order}', [AdminOrderController::class, 'show'])->name('orders.show');
+    Route::get('pesanan/{order}', [AdminOrderController::class, 'show'])->name('orders.show');
     Route::patch('pesanan/{order}/status', [AdminOrderController::class, 'updateStatus'])->name('orders.status');
 
     Route::get('laporan', [ReportController::class, 'index'])->name('reports.index');

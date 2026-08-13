@@ -3,12 +3,15 @@
 namespace Tests\Feature;
 
 use App\Enums\OrderStatus;
+use App\Enums\PaymentMethod;
 use App\Enums\UserRole;
 use App\Models\CartItem;
 use App\Models\Order;
 use App\Models\Product;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\URL;
 use Tests\TestCase;
 
 class CheckoutTest extends TestCase
@@ -288,5 +291,195 @@ class CheckoutTest extends TestCase
             ->assertOk()
             ->assertSee($order->order_number)
             ->assertSee('Rp 50.000');
+    }
+
+    public function test_qris_generate_returns_svg_and_does_not_create_order_yet(): void
+    {
+        $user = $this->customer();
+        $product = Product::factory()->create(['stock' => 10, 'is_active' => true]);
+        $this->addToCart($user, $product, 2);
+
+        $response = $this->actingAs($user)
+            ->post('/checkout/qris/generate', $this->checkoutPayload(['payment_method' => 'qris']))
+            ->assertOk()
+            ->assertJsonStructure(['token', 'svg']);
+
+        $this->assertNotEmpty($response->json('token'));
+        $this->assertStringContainsString('<svg', $response->json('svg'));
+
+        $this->assertDatabaseCount('orders', 0);
+        $this->assertDatabaseHas('products', ['id' => $product->id, 'stock' => 10]);
+    }
+
+    public function test_qris_generate_missing_fields_is_rejected(): void
+    {
+        $user = $this->customer();
+        $product = Product::factory()->create(['stock' => 10, 'is_active' => true]);
+        $this->addToCart($user, $product);
+
+        $this->actingAs($user)
+            ->post('/checkout/qris/generate', $this->checkoutPayload(['customer_name' => '']))
+            ->assertSessionHasErrors('customer_name');
+    }
+
+    public function test_qris_confirm_with_relative_signed_url_shows_confirmation_page(): void
+    {
+        $user = $this->customer();
+        $product = Product::factory()->create(['price' => 50000, 'stock' => 10, 'is_active' => true]);
+        $this->addToCart($user, $product, 1);
+
+        $token = 'test-token-123';
+        Cache::put("qris:{$token}", [
+            'user_id' => $user->id,
+            'customer_name' => 'Budi Santoso',
+            'phone' => '081234567890',
+            'address' => 'Jl. Merdeka No. 1, Jakarta',
+            'notes' => null,
+            'buy_now_product_id' => null,
+            'cart_lines' => [
+                ['product_id' => $product->id, 'quantity' => 1],
+            ],
+        ], now()->addHour());
+
+        // Build a *relative* signed URL, then request it through a different host to
+        // confirm the signature stays valid regardless of the accessing host.
+        $relative = URL::signedRoute('checkout.qris.confirm', ['token' => $token], null, false);
+
+        $this->withServerVariables(['HTTP_HOST' => 'random-ngrok-domain.ngrok.app'])
+            ->get($relative)
+            ->assertOk()
+            ->assertSee('Konfirmasi Pembayaran QRIS')
+            ->assertSee($product->name)
+            ->assertSee('Rp 50.000');
+
+        // Scanning only shows the confirmation page; no order is created yet.
+        $this->assertDatabaseCount('orders', 0);
+    }
+
+    public function test_qris_process_after_confirm_creates_paid_order(): void
+    {
+        $user = $this->customer();
+        $product = Product::factory()->create(['price' => 50000, 'stock' => 10, 'is_active' => true]);
+        $this->addToCart($user, $product, 1);
+
+        $token = 'test-token-456';
+        Cache::put("qris:{$token}", [
+            'user_id' => $user->id,
+            'customer_name' => 'Budi Santoso',
+            'phone' => '081234567890',
+            'address' => 'Jl. Merdeka No. 1, Jakarta',
+            'notes' => null,
+            'buy_now_product_id' => null,
+            'cart_lines' => [
+                ['product_id' => $product->id, 'quantity' => 1],
+            ],
+        ], now()->addHour());
+
+        $this->post("/checkout/qris/process/{$token}")
+            ->assertRedirect(route('checkout.qris.success', $token));
+
+        $order = Order::firstOrFail();
+        $this->assertEquals(PaymentMethod::Qris, $order->payment_method);
+        $this->assertEquals(OrderStatus::Paid, $order->status);
+        $this->assertEquals('50000.00', $order->total);
+        $this->assertEquals($user->id, $order->user_id);
+    }
+
+    public function test_qris_token_can_only_be_used_once(): void
+    {
+        $user = $this->customer();
+        $product = Product::factory()->create(['price' => 50000, 'stock' => 10, 'is_active' => true]);
+        $this->addToCart($user, $product, 1);
+
+        $token = 'single-use-token';
+        Cache::put("qris:{$token}", [
+            'user_id' => $user->id,
+            'customer_name' => 'Budi Santoso',
+            'phone' => '081234567890',
+            'address' => 'Jl. Merdeka No. 1, Jakarta',
+            'notes' => null,
+            'buy_now_product_id' => null,
+            'cart_lines' => [
+                ['product_id' => $product->id, 'quantity' => 1],
+            ],
+        ], now()->addHour());
+
+        $this->post("/checkout/qris/process/{$token}")->assertRedirect();
+        $this->assertEquals(1, Order::count());
+
+        $this->post("/checkout/qris/process/{$token}")->assertStatus(410);
+        $this->assertEquals(1, Order::count());
+    }
+
+    public function test_qris_success_page_shows_completed_order(): void
+    {
+        $user = $this->customer();
+        $product = Product::factory()->create(['price' => 50000, 'stock' => 10, 'is_active' => true]);
+        $this->addToCart($user, $product, 1);
+
+        $token = 'success-token';
+        Cache::put("qris:{$token}", [
+            'user_id' => $user->id,
+            'customer_name' => 'Budi Santoso',
+            'phone' => '081234567890',
+            'address' => 'Jl. Merdeka No. 1, Jakarta',
+            'notes' => null,
+            'buy_now_product_id' => null,
+            'cart_lines' => [
+                ['product_id' => $product->id, 'quantity' => 1],
+            ],
+        ], now()->addHour());
+
+        $this->post("/checkout/qris/process/{$token}")->assertRedirect();
+
+        $order = Order::firstOrFail();
+
+        $this->get("/checkout/qris/success/{$token}")
+            ->assertOk()
+            ->assertSee('Pembayaran Berhasil')
+            ->assertSee($order->order_number)
+            ->assertSee('Rp 50.000');
+    }
+
+    public function test_qris_status_reports_pending_then_confirmed(): void
+    {
+        $user = $this->customer();
+        $product = Product::factory()->create(['price' => 50000, 'stock' => 10, 'is_active' => true]);
+        $this->addToCart($user, $product, 1);
+
+        $token = $this->actingAs($user)
+            ->post('/checkout/qris/generate', $this->checkoutPayload(['payment_method' => 'qris']))
+            ->assertOk()
+            ->json('token');
+
+        // Still waiting for the scan.
+        $this->actingAs($user)
+            ->getJson("/checkout/qris/status/{$token}")
+            ->assertOk()
+            ->assertJson(['status' => 'pending']);
+
+        // A different user must not be able to poll this token.
+        $this->actingAs($this->customer())
+            ->getJson("/checkout/qris/status/{$token}")
+            ->assertForbidden();
+
+        // The scanning device confirms the payment.
+        $this->post("/checkout/qris/process/{$token}")->assertRedirect();
+
+        $order = Order::firstOrFail();
+
+        // The desktop now sees the payment was confirmed and gets the order id.
+        $this->actingAs($user)
+            ->getJson("/checkout/qris/status/{$token}")
+            ->assertOk()
+            ->assertJson(['status' => 'confirmed', 'order_id' => $order->id]);
+    }
+
+    public function test_qris_status_returns_expired_for_unknown_token(): void
+    {
+        $this->actingAs($this->customer())
+            ->getJson('/checkout/qris/status/unknown-token')
+            ->assertStatus(410)
+            ->assertJson(['status' => 'expired']);
     }
 }

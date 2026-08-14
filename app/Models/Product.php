@@ -110,6 +110,24 @@ class Product extends Model
     }
 
     /**
+     * Product images gallery.
+     */
+    public function images(): HasMany
+    {
+        return $this->hasMany(ProductImage::class)->orderBy('sort_order');
+    }
+
+    /**
+     * Get the primary product image.
+     */
+    public function primaryImage(): HasMany
+    {
+        return $this->hasMany(ProductImage::class)
+            ->where('is_primary', true)
+            ->limit(1);
+    }
+
+    /**
      * Normalize the color value to lowercase so that the catalog filter
      * and the admin form always use the same canonical values.
      */
@@ -138,11 +156,30 @@ class Product extends Model
 
     /**
      * Absolute URL of the product image, or a generated placeholder.
+     *
+     * Priority:
+     * 1. Primary gallery image (is_primary = true, chosen explicitly by admin)
+     * 2. Legacy single image field (the product's original main image)
+     * 3. First gallery image (fallback)
+     * 4. Placeholder
      */
     public function getImageUrlAttribute(): string
     {
+        // Primary image from gallery (explicitly chosen via admin)
+        $primaryImage = $this->images()->where('is_primary', true)->first();
+        if ($primaryImage && Storage::disk('public')->exists($primaryImage->image_path)) {
+            return Storage::disk('public')->url($primaryImage->image_path);
+        }
+
+        // Legacy single image (used until a gallery image is set as primary)
         if ($this->image !== null && Storage::disk('public')->exists($this->image)) {
             return Storage::disk('public')->url($this->image);
+        }
+
+        // First gallery image as fallback
+        $firstImage = $this->images()->first();
+        if ($firstImage && Storage::disk('public')->exists($firstImage->image_path)) {
+            return Storage::disk('public')->url($firstImage->image_path);
         }
 
         return $this->placeholderImageUrl();

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\ProductRequest;
 use App\Models\Category;
 use App\Models\Product;
+use App\Models\ProductImage;
 use App\Support\ProductQrCode;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -143,7 +144,7 @@ class ProductController extends Controller
     {
         $validated = $request->validated();
 
-        Product::create([
+        $product = Product::create([
             'category_id' => $validated['category_id'],
             'name' => $validated['name'],
             'slug' => $this->uniqueSlug($validated['name']),
@@ -157,9 +158,12 @@ class ProductController extends Controller
             'color' => $validated['color'] ?? null,
             'size' => $validated['size'] ?? null,
 
-            // Image
+            // Image (legacy support)
             'image' => $this->storeImage($request),
         ]);
+
+        // Store multiple images if provided
+        $this->storeProductImages($request, $product);
 
         return Redirect::route('admin.produk.index')
             ->with('success', 'Produk berhasil ditambahkan.');
@@ -170,6 +174,8 @@ class ProductController extends Controller
      */
     public function edit(Product $product): View
     {
+        $product->load('images');
+
         return view('admin.products.edit', [
             'product' => $product,
             'categories' => Category::orderBy('name')->get(),
@@ -202,9 +208,12 @@ class ProductController extends Controller
             'color' => $validated['color'] ?? null,
             'size' => $validated['size'] ?? null,
 
-            // Image
+            // Image (legacy support)
             'image' => $this->storeImage($request, $product),
         ]);
+
+        // Store multiple images if provided
+        $this->storeProductImages($request, $product);
 
         return Redirect::route('admin.produk.index')
             ->with('success', 'Produk berhasil diperbarui.');
@@ -261,14 +270,14 @@ class ProductController extends Controller
 
         return $path;
     }
-
     /**
      * Generate a unique slug based on the given name.
      */
     private function uniqueSlug(
         string $name,
         ?int $ignoreId = null
-    ): string {
+    ): string
+    {
         $baseSlug = Str::slug($name);
         $slug = $baseSlug;
         $counter = 2;
@@ -286,5 +295,84 @@ class ProductController extends Controller
         }
 
         return $slug;
+    }
+
+    /**
+     * Store multiple product images in the gallery.
+     */
+    private function storeProductImages(
+        ProductRequest $request,
+        Product $product
+    ): void {
+        if (! $request->hasFile('gallery_images')) {
+            return;
+        }
+
+        $files = $request->file('gallery_images');
+        $sortOrder = $product->images()->max('sort_order') ?? 0;
+        $needsPrimary = $product->image === null && ! $product->images()->exists();
+
+        foreach ($files as $file) {
+            $path = $file->store('products/gallery', 'public');
+
+            $sortOrder++;
+
+            // If the product has no main image and this is the first
+            // gallery image, promote it as primary.
+            $isPrimary = $needsPrimary && $sortOrder === 1;
+
+            ProductImage::create([
+                'product_id' => $product->id,
+                'image_path' => $path,
+                'is_primary' => $isPrimary,
+                'sort_order' => $sortOrder,
+            ]);
+
+            $needsPrimary = false;
+        }
+    }
+
+    /**
+     * Delete a product image.
+     */
+    public function deleteImage(ProductImage $productImage): RedirectResponse
+    {
+        $product = $productImage->product;
+
+        if (Storage::disk('public')->exists($productImage->image_path)) {
+            Storage::disk('public')->delete($productImage->image_path);
+        }
+
+        $wasPrimary = $productImage->is_primary;
+
+        $productImage->delete();
+
+        // If the primary image was deleted, promote the first remaining
+        // gallery image so the product always has a clear main image.
+        if ($wasPrimary) {
+            $nextImage = $product->images()->first();
+            if ($nextImage) {
+                $product->images()->update(['is_primary' => false]);
+                $nextImage->update(['is_primary' => true]);
+            }
+        }
+
+        return back()->with('success', 'Gambar produk berhasil dihapus.');
+    }
+
+    /**
+     * Set a product image as primary.
+     */
+    public function setPrimaryImage(ProductImage $productImage): RedirectResponse
+    {
+        $product = $productImage->product;
+
+        // Remove primary flag from all images
+        $product->images()->update(['is_primary' => false]);
+
+        // Set this image as primary
+        $productImage->update(['is_primary' => true]);
+
+        return back()->with('success', 'Gambar utama berhasil diperbarui.');
     }
 }

@@ -28,6 +28,8 @@ class ProductRequest extends FormRequest
             'price' => ['required', 'numeric', 'min:0', 'max:999999999.99'],
             'stock' => ['required', 'integer', 'min:0', 'max:999999'],
             'image' => ['nullable', 'image', 'mimes:jpeg,jpg,png,webp', 'max:2048'],
+            'gallery_images' => ['nullable', 'array'],
+            'gallery_images.*' => ['image', 'mimes:jpeg,jpg,png,webp', 'max:2048'],
             'is_active' => ['sometimes', 'boolean'],
             'is_featured' => ['sometimes', 'boolean'],
             'color' => ['nullable', 'string', 'max:50'],

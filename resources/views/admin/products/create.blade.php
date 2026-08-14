@@ -199,7 +199,7 @@
 
                 <div>
                     <label for="image" class="block text-sm font-semibold text-neutral-700">
-                        Gambar Produk
+                        Gambar Produk (Utama)
                     </label>
 
                     <input type="file" id="image" name="image" accept="image/jpeg,image/png,image/webp" data-file="image"
@@ -211,6 +211,36 @@
                     </p>
 
                     @error('image')
+                        <p class="mt-1 text-xs font-semibold text-red-600">
+                            {{ $message }}
+                        </p>
+                    @enderror
+                </div>
+
+
+                {{-- ===================================================== --}}
+                {{-- GALLERY IMAGES --}}
+                {{-- ===================================================== --}}
+
+                <div class="sm:col-span-2">
+                    <label for="gallery_images" class="block text-sm font-semibold text-neutral-700">
+                        Galeri Gambar Produk
+                    </label>
+
+                    <input type="file" id="gallery_images" name="gallery_images[]" accept="image/jpeg,image/png,image/webp" multiple
+                        class="mt-1.5 block w-full text-sm text-neutral-600 file:mr-3 file:rounded-full file:border-0 file:bg-neutral-100 file:px-4 file:py-2 file:text-sm file:font-bold file:text-neutral-700 hover:file:bg-neutral-200">
+
+                    <p class="mt-1 text-xs text-neutral-400">
+                        Upload beberapa gambar sekaligus · JPG, PNG, atau WEBP · maksimal 2MB per file
+                    </p>
+
+                    @error('gallery_images')
+                        <p class="mt-1 text-xs font-semibold text-red-600">
+                            {{ $message }}
+                        </p>
+                    @enderror
+
+                    @error('gallery_images.*')
                         <p class="mt-1 text-xs font-semibold text-red-600">
                             {{ $message }}
                         </p>

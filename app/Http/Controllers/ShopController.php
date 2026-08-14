@@ -70,11 +70,14 @@ class ShopController extends Controller
         abort_unless($product->is_active, 404);
 
         $relatedProducts = Product::query()
-            ->active()
+            ->where('id', '!=', $product->id)
             ->where('category_id', $product->category_id)
-            ->whereKeyNot($product->id)
+            ->active()
             ->limit(4)
             ->get();
+
+        // Eager load product images
+        $product->load('images');
 
         return view('shop.show', [
             'product' => $product,

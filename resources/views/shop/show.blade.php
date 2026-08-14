@@ -4,23 +4,71 @@
 
 @section('content')
 
+    @php
+        // Daftar semua gambar produk (legacy utama + galeri), di-dedupe berdasarkan path.
+        $galleryUrls = collect()
+            ->push($product->image)
+            ->merge($product->images->pluck('image_path'))
+            ->filter()
+            ->unique()
+            ->map(fn ($path) => Storage::disk('public')->url($path))
+            ->values()
+            ->all();
+
+        // Tidak ada gambar sama sekali -> fallback ke placeholder / image_url.
+        if (empty($galleryUrls)) {
+            $galleryUrls = [$product->image_url];
+        }
+
+        // Indeks default = gambar utama yang sedang ditampilkan.
+        $activeIndex = array_search($product->image_url, $galleryUrls, true);
+        $activeIndex = $activeIndex === false ? 0 : $activeIndex;
+    @endphp
+
     <section x-data="{
-                                                                    quantity: 1,
-                                                                    maxQuantity: {{ max((int) $product->stock, 1) }},
-                                                                    selectedImage: '{{ $product->image_url }}',
+                        quantity: 1,
+                        maxQuantity: {{ max((int) $product->stock, 1) }},
+                        images: @js($galleryUrls),
+                        activeIndex: {{ $activeIndex }},
+                        touchStartX: null,
+                        lightboxOpen: false,
 
-                                                                    increase() {
-                                                                        if (this.quantity < this.maxQuantity) {
-                                                                            this.quantity++
-                                                                        }
-                                                                    },
+                        get selectedImage() {
+                            return this.images[this.activeIndex];
+                        },
 
-                                                                    decrease() {
-                                                                        if (this.quantity > 1) {
-                                                                            this.quantity--
-                                                                        }
-                                                                    }
-                                                                }"
+                        increase() {
+                            if (this.quantity < this.maxQuantity) {
+                                this.quantity++
+                            }
+                        },
+
+                        decrease() {
+                            if (this.quantity > 1) {
+                                this.quantity--
+                            }
+                        },
+
+                        next() {
+                            this.activeIndex = (this.activeIndex + 1) % this.images.length;
+                        },
+
+                        prev() {
+                            this.activeIndex = (this.activeIndex - 1 + this.images.length) % this.images.length;
+                        },
+
+                        select(i) {
+                            this.activeIndex = i;
+                        },
+
+                        openLightbox() {
+                            this.lightboxOpen = true;
+                        },
+
+                        closeLightbox() {
+                            this.lightboxOpen = false;
+                        }
+                    }"
         class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-16">
 
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-10 lg:gap-12">
@@ -32,23 +80,70 @@
             <div>
 
                 {{-- MAIN IMAGE --}}
-                <div class="w-full aspect-square bg-paper overflow-hidden">
+                <div class="relative w-full aspect-square bg-paper overflow-hidden group cursor-zoom-in"
+                    @click="openLightbox()"
+                    @touchstart.passive="touchStartX = $event.changedTouches[0].clientX"
+                    @touchend.passive="if (touchStartX !== null) {
+                                            const dx = $event.changedTouches[0].clientX - touchStartX;
+                                            if (Math.abs(dx) > 50) { dx < 0 ? next() : prev(); }
+                                            touchStartX = null;
+                                        }">
 
                     <img :src="selectedImage" src="{{ $product->image_url }}" alt="{{ $product->name }}"
                         class="w-full h-full object-contain">
+
+                    {{-- PREV --}}
+                    <button type="button" @click.stop="prev()" x-show="images.length > 1"
+                        class="absolute left-3 top-1/2 -translate-y-1/2 z-10 w-11 h-11 sm:w-12 sm:h-12
+                               flex items-center justify-center rounded-full bg-white/90 shadow-card
+                               text-neutral-900 hover:bg-white transition touch-manipulation"
+                        aria-label="Gambar sebelumnya">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+                        </svg>
+                    </button>
+
+                    {{-- NEXT --}}
+                    <button type="button" @click.stop="next()" x-show="images.length > 1"
+                        class="absolute right-3 top-1/2 -translate-y-1/2 z-10 w-11 h-11 sm:w-12 sm:h-12
+                               flex items-center justify-center rounded-full bg-white/90 shadow-card
+                               text-neutral-900 hover:bg-white transition touch-manipulation"
+                        aria-label="Gambar berikutnya">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                        </svg>
+                    </button>
+
+                    {{-- ZOOM HINT --}}
+                    <span class="absolute bottom-3 left-3 z-10 hidden sm:flex items-center gap-1.5 rounded-full
+                                 bg-white/80 text-neutral-700 px-2.5 py-1.5 text-[11px] font-semibold shadow-card
+                                 opacity-0 group-hover:opacity-100 transition">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35M16 11a5 5 0 11-10 0 5 5 0 0110 0zM11 8v6M8 11h6" />
+                        </svg>
+                        Perbesar
+                    </span>
+
+                    {{-- COUNTER --}}
+                    <span x-show="images.length > 1"
+                        class="absolute bottom-3 right-3 z-10 rounded-full bg-black/60 text-white text-[10px]
+                               font-semibold px-2.5 py-1"
+                        x-text="(activeIndex + 1) + ' / ' + images.length"></span>
 
                 </div>
 
 
                 {{-- THUMBNAILS --}}
-                <div class="mt-3 flex items-center gap-3 overflow-x-auto">
-
-                    <button type="button" @click="selectedImage = '{{ $product->image_url }}'"
-                        class="w-20 h-20 shrink-0 border border-neutral-900 bg-paper overflow-hidden">
-                        <img src="{{ $product->image_url }}" alt="{{ $product->name }}"
-                            class="w-full h-full object-contain">
-                    </button>
-
+                <div class="mt-3 flex items-center gap-3 overflow-x-auto overscroll-x-contain snap-x
+                            [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                    <template x-for="(img, i) in images" :key="i">
+                        <button type="button" @click="select(i)" :class="i === activeIndex ? 'border-neutral-900' : 'border-neutral-200'"
+                            class="w-16 h-16 sm:w-20 sm:h-20 shrink-0 snap-start rounded-lg border border-neutral-200
+                                   bg-paper overflow-hidden touch-manipulation transition">
+                            <img :src="img" :alt="'{{ $product->name }} ' + (i + 1)"
+                                class="w-full h-full object-contain">
+                        </button>
+                    </template>
                 </div>
 
 
@@ -94,9 +189,9 @@
                         aria-label="Add to wishlist">
 
                         <!-- <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                        d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 000-7.78z" />
-                                </svg> -->
+                                        <path stroke-linecap="round" stroke-linejoin="round"
+                                            d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 000-7.78z" />
+                                    </svg> -->
 
                     </button>
 
@@ -114,28 +209,28 @@
 
 
                 <!-- {{-- QR CODE --}}
-                <div class="mt-5 border border-neutral-200 rounded-lg">
+                    <div class="mt-5 border border-neutral-200 rounded-lg">
 
-                    <div class="px-3 py-3">
+                        <div class="px-3 py-3">
 
-                        <h3 class="text-[12px] font-bold text-neutral-900">
-                            QR Code
-                        </h3>
+                            <h3 class="text-[12px] font-bold text-neutral-900">
+                                QR Code
+                            </h3>
 
-                        <div class="mt-2 flex items-center gap-4">
+                            <div class="mt-2 flex items-center gap-4">
 
-                            <img src="{{ route('shop.qr', $product) }}" alt="QR Code Produk" loading="lazy"
-                                class="h-28 w-28 object-contain">
+                                <img src="{{ route('shop.qr', $product) }}" alt="QR Code Produk" loading="lazy"
+                                    class="h-28 w-28 object-contain">
 
-                            <p class="text-[10px] text-neutral-500">
-                                Scan untuk membuka halaman produk.
-                            </p>
+                                <p class="text-[10px] text-neutral-500">
+                                    Scan untuk membuka halaman produk.
+                                </p>
+
+                            </div>
 
                         </div>
 
-                    </div>
-
-                </div> -->
+                    </div> -->
                 {{-- QUANTITY INFORMATION --}}
                 <div class="mt-5 border border-neutral-200 rounded-lg">
 
@@ -364,6 +459,56 @@
 
             </div>
 
+        </div>
+
+        {{-- ===================================================== --}}
+        {{-- LIGHTBOX --}}
+        {{-- ===================================================== --}}
+        <div x-show="lightboxOpen"
+            x-cloak
+            x-transition.opacity.duration.200ms
+            x-init="$watch('lightboxOpen', v => document.body.classList.toggle('overflow-y-hidden', v))"
+            @keydown.escape.window="lightboxOpen = false"
+            class="fixed inset-0 z-50 bg-black/90 flex items-center justify-center"
+            @click="lightboxOpen = false">
+
+            {{-- GAMBAR BESAR --}}
+            <img :src="selectedImage" alt="{{ $product->name }}"
+                class="max-h-[88vh] max-w-[92vw] object-contain" @click.stop>
+
+            {{-- PREV --}}
+            <button type="button" @click.stop="prev()" x-show="images.length > 1"
+                class="absolute left-4 top-1/2 -translate-y-1/2 z-10 w-12 h-12 flex items-center justify-center
+                       rounded-full bg-white/10 text-white hover:bg-white/20 transition touch-manipulation"
+                aria-label="Gambar sebelumnya">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+                </svg>
+            </button>
+
+            {{-- NEXT --}}
+            <button type="button" @click.stop="next()" x-show="images.length > 1"
+                class="absolute right-4 top-1/2 -translate-y-1/2 z-10 w-12 h-12 flex items-center justify-center
+                       rounded-full bg-white/10 text-white hover:bg-white/20 transition touch-manipulation"
+                aria-label="Gambar berikutnya">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
+            </button>
+
+            {{-- CLOSE --}}
+            <button type="button" @click.stop="lightboxOpen = false"
+                class="absolute top-4 right-4 z-10 w-12 h-12 flex items-center justify-center rounded-full
+                       bg-white/10 text-white hover:bg-white/20 transition touch-manipulation"
+                aria-label="Tutup">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 6l12 12M18 6L6 18" />
+                </svg>
+            </button>
+
+            {{-- COUNTER --}}
+            <span x-show="images.length > 1" x-text="(activeIndex + 1) + ' / ' + images.length"
+                class="absolute top-4 left-4 z-10 rounded-full bg-white/10 text-white text-xs font-semibold px-3 py-1.5"></span>
         </div>
 
     </section>

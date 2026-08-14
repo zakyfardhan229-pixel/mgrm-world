@@ -48,6 +48,7 @@
                             <th class="pb-3 pr-4">Metode</th>
                             <th class="pb-3 pr-4">Status</th>
                             <th class="pb-3 pr-4">Tanggal</th>
+                            <th class="pb-3 pr-4">Aksi</th>
                         </tr>
                     </thead>
 
@@ -111,10 +112,18 @@
                                     {{ $order->created_at->format('d M Y') }}
                                 </td>
 
+                                {{-- Aksi --}}
+                                <td class="py-3.5 pr-4 whitespace-nowrap">
+                                    <a href="{{ route('admin.orders.show', $order) }}"
+                                        class="inline-flex items-center rounded-lg bg-black px-3 py-1.5 text-sm font-semibold text-white hover:bg-white hover:text-black transition duration-300 ease-in-out">
+                                        Edit
+                                    </a>
+                                </td>
+
                             </tr>
                         @empty
                             <tr>
-                                <td colspan="7" class="py-10 text-center text-neutral-400">
+                                <td colspan="8" class="py-10 text-center text-neutral-400">
                                     Belum ada pesanan.
                                 </td>
                             </tr>

@@ -80,6 +80,8 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->name('admin.')->grou
         ->except('show');
 
     Route::get('produk/{product}/qr', [AdminProductController::class, 'qr'])->name('produk.qr');
+    Route::delete('produk/gambar/{productImage}', [AdminProductController::class, 'deleteImage'])->name('produk.gambar.delete');
+    Route::patch('produk/gambar/{productImage}/primary', [AdminProductController::class, 'setPrimaryImage'])->name('produk.gambar.primary');
 
     Route::get('pesanan', [AdminOrderController::class, 'index'])->name('orders.index');
     Route::get('pesanan/{order}', [AdminOrderController::class, 'show'])->name('orders.show');
